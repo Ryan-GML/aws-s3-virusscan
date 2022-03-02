@@ -88,6 +88,13 @@ Parameters:
     Description: 'S3 object tag key used to specify values of "clean" or "infected".'
     Type: String
     Default: 'clamav-status'
+  TagAppend:
+    Description: 'Append status tags (appending requires the GetObjectTagging role)'
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
   AutoScalingMinSize:
     Description: 'Min Size for Auto Scaling'
     Type: Number
@@ -155,6 +162,7 @@ Conditions:
   HasNotSSHBastionSecurityGroup: !Equals [!Ref ParentSSHBastionStack, '']
   HasDeleteInfectedFiles: !Equals [!Ref DeleteInfectedFiles, 'true']
   HasTagFiles: !Equals [!Ref TagFiles, 'true']
+  HasTagAppend: !Equals [!Ref TagAppend, 'true']
   HasSpotPrice: !Not [!Equals [!Ref SpotPrice, '']]
   HasSwapSize: !Not [!Equals [!Ref SwapSize, '0']]
 Mappings:
@@ -445,10 +453,21 @@ Resources:
           - 's3:PutObjectTagging'
           - 's3:PutObjectVersionTagging'
           Resource: !Ref S3ObjectRestriction
-          Condition:
-            'ForAllValues:StringLike':
-              's3:RequestObjectTagKeys': !Ref TagKey
       PolicyName: s3objecttag
+      Roles:
+      - !Ref ScanIAMRole
+  TagAppendPolicy:
+    Type: 'AWS::IAM::Policy'
+    Condition: HasTagAppend
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - 's3:GetObjectTagging'
+          Resource: !Ref S3ObjectRestriction
+      PolicyName: s3getobjecttag
       Roles:
       - !Ref ScanIAMRole
   ScanIAMPolicySSHAccess:
@@ -852,19 +871,39 @@ Resources:
 
                   private
 
+                  def get_tags(bucket, key)
+                    response = s3.get_object_tagging(
+                      bucket: bucket,
+                      key: key
+                    )
+                    the_tags = []
+                    response.tag_set.each do |a_tag|
+                      the_tags.concat([a_tag])
+                    end
+                    return the_tags
+                  end
+                  
                   def tag(bucket, key, version, status)
+                    new_tag = Aws::S3::Types::Tag.new({key:tag_key,value: status})
+                    new_tags = [new_tag]
+
+                    if conf['tag_append']
+                      old_tags = get_tags(bucket, key)
+                      new_tags.concat(old_tags)
+                    end
+
                     if version
                       s3.put_object_tagging(
                         bucket: bucket,
                         key: key,
                         version_id: version,
-                        tagging: {tag_set: [{key: tag_key, value: status}]}
+                        tagging: {tag_set: new_tags}
                       )
                     else
                       s3.put_object_tagging(
                         bucket: bucket,
                         key: key,
-                        tagging: {tag_set: [{key: tag_key, value: status}]}
+                        tagging: {tag_set: new_tags}
                       )
                     end
                   end
@@ -919,6 +958,7 @@ Resources:
                 report_clean: ${ReportCleanFiles}
                 tag_files: ${TagFiles}
                 tag_key: ${TagKey}
+                tag_append: ${TagAppend}
                 region: ${AWS::Region}
                 queue: ${ScanQueue}
                 topic: ${FindingsTopic}
