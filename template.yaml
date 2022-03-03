@@ -878,16 +878,19 @@ Resources:
                     )
                     the_tags = []
                     response.tag_set.each do |a_tag|
-                      the_tags.concat([a_tag])
+                      unless a_tag.key.casecmp(tag_key) == 0
+                        the_tags.concat([a_tag])
+                      end
                     end
                     return the_tags
-                  end
+                  end                  
                   
                   def tag(bucket, key, version, status)
                     new_tag = Aws::S3::Types::Tag.new({key:tag_key,value: status})
-                    new_tags = [new_tag]
+                    new_tags = []
+                    new_tags.concat([new_tag])
 
-                    if conf['tag_append']
+                    if conf['tag_append']  == true
                       old_tags = get_tags(bucket, key)
                       new_tags.concat(old_tags)
                     end
